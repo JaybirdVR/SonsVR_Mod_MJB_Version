@@ -13,6 +13,13 @@ using Il2Cpp;
 
 namespace SonsVRMod
 {
+    public enum TurnMode
+    {
+        Smooth,
+        Snap,
+        Disabled
+    }
+
     /// <summary>
     /// Helper struct to associate a loaded Scene with its main Camera (if needed for VR rendering).
     /// Currently unused but kept for potential future use (e.g., multi-scene VR handling).
@@ -29,6 +36,24 @@ namespace SonsVRMod
     /// </summary>
     public class SonsVRMod : MelonMod
     {
+        private const string DefaultTurnMode = "Smooth";
+        private const float DefaultSmoothTurnSpeed = 100f;
+        private const float DefaultSnapTurnAngle = 30f;
+        private const float DefaultTurnDeadzone = 0.2f;
+        private const float DefaultSnapTurnThreshold = 0.7f;
+
+        private static MelonPreferences_Entry<string> turnModePreference;
+        private static MelonPreferences_Entry<float> smoothTurnSpeedPreference;
+        private static MelonPreferences_Entry<float> snapTurnAnglePreference;
+        private static MelonPreferences_Entry<float> turnDeadzonePreference;
+        private static MelonPreferences_Entry<float> snapTurnThresholdPreference;
+
+        public static TurnMode CurrentTurnMode { get; private set; } = TurnMode.Smooth;
+        public static float SmoothTurnSpeed { get; private set; } = DefaultSmoothTurnSpeed;
+        public static float SnapTurnAngle { get; private set; } = DefaultSnapTurnAngle;
+        public static float TurnDeadzone { get; private set; } = DefaultTurnDeadzone;
+        public static float SnapTurnThreshold { get; private set; } = DefaultSnapTurnThreshold;
+
         /// <summary>
         /// Singleton instance of this mod for global access.
         /// </summary>
@@ -89,9 +114,104 @@ namespace SonsVRMod
             MelonLogger.Warning("********************************************************");
 
             Instance = this;
+            InitializePreferences();
 
             // Initialize VR subsystem (OpenVR + input + IL2CPP types)
             InitVR();
+        }
+
+        private static void InitializePreferences()
+        {
+            MelonPreferences_Category turningPreferences =
+                MelonPreferences.CreateCategory("SonsVR_Turning", "SonsVR Turning");
+
+            turnModePreference = turningPreferences.CreateEntry(
+                "TurnMode",
+                DefaultTurnMode,
+                "Turn Mode",
+                "Available values: Smooth, Snap, Disabled.");
+            smoothTurnSpeedPreference = turningPreferences.CreateEntry(
+                "SmoothTurnSpeed",
+                DefaultSmoothTurnSpeed,
+                "Smooth Turn Speed",
+                "Smooth-turn speed in degrees per second.");
+            snapTurnAnglePreference = turningPreferences.CreateEntry(
+                "SnapTurnAngle",
+                DefaultSnapTurnAngle,
+                "Snap Turn Angle",
+                "Degrees rotated by each snap turn.");
+            turnDeadzonePreference = turningPreferences.CreateEntry(
+                "TurnDeadzone",
+                DefaultTurnDeadzone,
+                "Turn Deadzone",
+                "Minimum horizontal right-stick deflection used for turning.");
+            snapTurnThresholdPreference = turningPreferences.CreateEntry(
+                "SnapTurnThreshold",
+                DefaultSnapTurnThreshold,
+                "Snap Turn Threshold",
+                "Horizontal right-stick deflection required to activate a snap turn.");
+
+            ValidateTurningPreferences();
+        }
+
+        private static void ValidateTurningPreferences()
+        {
+            if (turnModePreference == null)
+            {
+                return;
+            }
+
+            TurnMode parsedTurnMode;
+            if (!System.Enum.TryParse(turnModePreference.Value, true, out parsedTurnMode) ||
+                !System.Enum.IsDefined(typeof(TurnMode), parsedTurnMode))
+            {
+                MelonLogger.Warning(
+                    $"Invalid TurnMode '{turnModePreference.Value}'. Falling back to {DefaultTurnMode}.");
+                parsedTurnMode = TurnMode.Smooth;
+            }
+
+            CurrentTurnMode = parsedTurnMode;
+            SmoothTurnSpeed = ValidatePositiveFinite(
+                smoothTurnSpeedPreference.Value, DefaultSmoothTurnSpeed, "SmoothTurnSpeed", 360f);
+            SnapTurnAngle = ValidatePositiveFinite(
+                snapTurnAnglePreference.Value, DefaultSnapTurnAngle, "SnapTurnAngle", 180f);
+
+            float deadzone = turnDeadzonePreference.Value;
+            if (float.IsNaN(deadzone) || float.IsInfinity(deadzone) || deadzone < 0f || deadzone >= 1f)
+            {
+                MelonLogger.Warning(
+                    $"Invalid TurnDeadzone '{deadzone}'. Falling back to {DefaultTurnDeadzone}.");
+                deadzone = DefaultTurnDeadzone;
+            }
+
+            TurnDeadzone = deadzone;
+
+            float snapTurnThreshold = snapTurnThresholdPreference.Value;
+            if (float.IsNaN(snapTurnThreshold) ||
+                float.IsInfinity(snapTurnThreshold) ||
+                snapTurnThreshold <= deadzone ||
+                snapTurnThreshold > 1f)
+            {
+                float fallback = DefaultSnapTurnThreshold > deadzone ? DefaultSnapTurnThreshold : 1f;
+                MelonLogger.Warning(
+                    $"Invalid SnapTurnThreshold '{snapTurnThreshold}'. Falling back to {fallback}.");
+                snapTurnThreshold = fallback;
+            }
+
+            SnapTurnThreshold = snapTurnThreshold;
+        }
+
+        private static float ValidatePositiveFinite(
+            float value, float fallback, string preferenceName, float maximum)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f || value > maximum)
+            {
+                MelonLogger.Warning(
+                    $"Invalid {preferenceName} '{value}'. Falling back to {fallback}.");
+                return fallback;
+            }
+
+            return value;
         }
 
         /// <summary>
@@ -287,6 +407,7 @@ namespace SonsVRMod
         /// </summary>
         public override void OnPreferencesSaved()
         {
+            ValidateTurningPreferences();
         }
 
         /// <summary>
@@ -295,6 +416,7 @@ namespace SonsVRMod
         /// </summary>
         public override void OnPreferencesLoaded()
         {
+            ValidateTurningPreferences();
         }
     }
 }

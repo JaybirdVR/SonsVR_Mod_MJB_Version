@@ -147,12 +147,10 @@ namespace SonsVRMod
         private float lastRunActivationTime = 0f;
         private float runActivationCooldown = 0.25f; // Prevents accidental run activation
 
-        // === SNAP TURN CONFIGURATION ===
+        // === TURN STATE ===
 
         private float snapTurnOffset = 0f; // Cumulative yaw offset from snap turns
         private bool snapTurnReset = true; // Prevents continuous rotation while stick is held
-        private float snapAngle = 30f; // Degrees per snap turn
-        private float stickThreshold = 0.7f; // Minimum stick deflection to trigger turn
 
         /// <summary>
         /// Cached reference to the player's animation controller (unused but reserved).
@@ -440,35 +438,48 @@ namespace SonsVRMod
 
 
 
-                // --- SNAP TURN: Right thumbstick horizontal input ---
+                // --- TURNING: Right thumbstick horizontal input ---
                 UnityEngine.Vector2 rightStick = NativeVRInput.GetVector2("ThumbstickRight");
-                if (Mathf.Abs(rightStick.x) > stickThreshold)
+                float horizontalTurn = rightStick.x;
+                float turnDeadzone = SonsVRMod.TurnDeadzone;
+
+                if (SonsVRMod.CurrentTurnMode == TurnMode.Smooth)
                 {
-                    if (snapTurnReset)
+                    if (Mathf.Abs(horizontalTurn) > turnDeadzone && StereoRender != null)
                     {
-                        // Determine turn direction (+30° or -30°)
-                        float direction = (rightStick.x > 0) ? snapAngle : -snapAngle;
-                        snapTurnOffset += direction;
-
-                        // Rotate the entire VR rig (StereoRender.transform is the root under Body)
-                        if (StereoRender != null)
-                        {
-                            StereoRender.transform.Rotate(0, direction, 0, Space.World);
-                        }
-
-                        snapTurnReset = false;
+                        float direction = horizontalTurn * SonsVRMod.SmoothTurnSpeed * Time.deltaTime;
+                        StereoRender.transform.Rotate(0, direction, 0, Space.World);
                     }
                 }
-                else if (Mathf.Abs(rightStick.x) < 0.2f)
+                else if (SonsVRMod.CurrentTurnMode == TurnMode.Snap)
                 {
-                    // Reset flag when stick is centered, allowing next turn
-                    snapTurnReset = true;
+                    if (Mathf.Abs(horizontalTurn) > SonsVRMod.SnapTurnThreshold)
+                    {
+                        if (snapTurnReset)
+                        {
+                            float direction =
+                                (horizontalTurn > 0) ? SonsVRMod.SnapTurnAngle : -SonsVRMod.SnapTurnAngle;
+                            snapTurnOffset += direction;
+
+                            if (StereoRender != null)
+                            {
+                                StereoRender.transform.Rotate(0, direction, 0, Space.World);
+                            }
+
+                            snapTurnReset = false;
+                        }
+                    }
+                    else if (Mathf.Abs(horizontalTurn) <= turnDeadzone)
+                    {
+                        // Reset only after the stick is centered, preventing repeated snaps while held.
+                        snapTurnReset = true;
+                    }
                 }
 
                 // --- BODY ALIGNMENT: Rotate player to match HMD forward direction ---
                 if (LocalPlayer != null && StereoRender?.Head != null)
                 {
-                    // StereoRender.Head already includes snap-turn rotation (inherits from parent)
+                    // StereoRender.Head already includes turn rotation (inherits from parent)
                     if (UsedCamera != null)
                     {
                         // Sync game camera rotation to HMD (for UI, weapon alignment, etc.)

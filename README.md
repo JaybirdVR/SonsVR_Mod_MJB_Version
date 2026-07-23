@@ -119,9 +119,21 @@ so that `MelonLoader\Il2CppAssemblies` exists.
 
 ---
 
-## 🛠 Configuration (Future)
+## 🛠 Turning configuration
 
-All settings (IPD, snap angle, offsets, sensitivity) are currently hardcoded. A `settings.ini` file will be added soon for easy user customization.
+Turning is configured through the `SonsVR_Turning` MelonPreferences category:
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `TurnMode` | `Smooth` | `Smooth`, `Snap`, or `Disabled`. Invalid values safely fall back to `Smooth`. |
+| `SmoothTurnSpeed` | `100` | Smooth-turn speed in degrees per second. |
+| `SnapTurnAngle` | `30` | Degrees rotated by each snap turn. |
+| `TurnDeadzone` | `0.2` | Minimum horizontal right-thumbstick deflection used for turning. |
+| `SnapTurnThreshold` | `0.7` | Horizontal right-thumbstick deflection required to activate a snap turn. Must be greater than `TurnDeadzone` and no greater than `1.0`. |
+
+MelonLoader saves these preferences in `UserData\MelonPreferences.cfg` inside
+the *Sons of the Forest* installation folder. Close the game before editing the
+file manually so MelonLoader does not overwrite your changes.
 
 ---
 
@@ -129,8 +141,8 @@ All settings (IPD, snap angle, offsets, sensitivity) are currently hardcoded. A 
 
 ### Planned Features & Fixes
 
-- ✅ **Add `settings.ini`**  
-  Export all hardcoded values (position offset, snap angle, thresholds, etc.) to an external config file.
+- 🔧 **Export remaining settings**
+  Export remaining hardcoded values (position offsets, sensitivities, etc.) to MelonPreferences.
 
 - 🔧 **Fix Camera & Position Handling**  
   Improve detection and switching logic for dynamic cameras (vehicles, cutscenes, UI scenes).
@@ -154,7 +166,7 @@ All settings (IPD, snap angle, offsets, sensitivity) are currently hardcoded. A 
 ### Additional Suggested Improvements
 
 - 🧭 **Comfort Options**  
-  Add smooth turning, vignette-based tunneling, and height calibration.
+  Add vignette-based tunneling and height calibration.
 
 - 🗣 **VR Audio Support**  
   Integrate HRTF or SteamVR audio listeners for spatial sound.
