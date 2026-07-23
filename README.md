@@ -101,6 +101,24 @@ Built with **MelonLoader**, **Il2CppInterop**, and **SteamVR Plugin**, it replac
 
 ---
 
+## 🔨 Building from source
+
+The project reads its MelonLoader and generated IL2CPP references from your own
+*Sons of the Forest* installation. Pass that folder when building:
+
+```powershell
+dotnet build .\SonsVR_Mod\SonsVR_Mod.csproj -p:SonsOfTheForestDir="C:\Program Files (x86)\Steam\steamapps\common\Sons Of The Forest"
+```
+
+To also copy the compiled mod into the game's `Mods` folder after a successful
+build, add `-p:DeployToGame=true`. Deployment is disabled by default.
+
+You can set `SonsOfTheForestDir` as an environment variable instead of passing
+it on every build. MelonLoader must already be installed and run at least once
+so that `MelonLoader\Il2CppAssemblies` exists.
+
+---
+
 ## 🛠 Configuration (Future)
 
 All settings (IPD, snap angle, offsets, sensitivity) are currently hardcoded. A `settings.ini` file will be added soon for easy user customization.

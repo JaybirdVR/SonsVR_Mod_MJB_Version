@@ -1,0 +1,12 @@
+# Generated .NET build output
+**/bin/
+**/obj/
+
+# Local editor and AI-tool settings
+.vscode/
+.agents/
+
+# Visual Studio local state
+.vs/
+*.user
+*.suo
