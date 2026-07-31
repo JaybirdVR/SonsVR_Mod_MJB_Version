@@ -43,6 +43,16 @@ namespace SonsVRMod
         public Camera LeftCam, RightCam;
 
         /// <summary>
+        /// Latest valid HMD pose in OpenVR tracking space. The rig currently
+        /// applies HMD rotation but intentionally leaves Head at the game
+        /// camera's position, so controller poses must be made relative to
+        /// this raw HMD pose before they are placed in the game world.
+        /// </summary>
+        public Vector3 HmdTrackingPosition { get; private set; }
+        public Quaternion HmdTrackingRotation { get; private set; } = Quaternion.identity;
+        public bool HasValidHmdTrackingPose { get; private set; }
+
+        /// <summary>
         /// Render targets for left and right eyes.
         /// Submitted to OpenVR compositor for final display in the headset.
         /// </summary>
@@ -254,7 +264,24 @@ namespace SonsVRMod
             var hmdPose = renderPoseArray[(int)OpenVR.k_unTrackedDeviceIndex_Hmd];
             if (hmdPose.bPoseIsValid)
             {
-                Head.localRotation = hmdPose.mDeviceToAbsoluteTracking.GetRotation();
+                HmdMatrix34_t hmdMatrix = hmdPose.mDeviceToAbsoluteTracking;
+                HmdTrackingPosition = new Vector3(
+                    hmdMatrix.m3,
+                    hmdMatrix.m7,
+                    -hmdMatrix.m11);
+                HmdTrackingRotation = hmdMatrix.GetRotation();
+                HasValidHmdTrackingPose = true;
+
+                float yawOffset = VRPlayer.Instance != null
+                    ? VRPlayer.Instance.EffectiveYawOffset
+                    : 0f;
+                Head.localRotation =
+                    Quaternion.Euler(0f, yawOffset, 0f) * HmdTrackingRotation;
+
+            }
+            else
+            {
+                HasValidHmdTrackingPose = false;
             }
 
             // Refresh projection matrices (they can change with IPD or calibration)

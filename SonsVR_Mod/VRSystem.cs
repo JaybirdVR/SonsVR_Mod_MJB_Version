@@ -2,6 +2,7 @@
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Il2CppEndnight.Utilities;
 
 namespace SonsVRMod
 {
@@ -78,8 +79,10 @@ namespace SonsVRMod
         {
             UpdateCounter++;
 
-            // Only check every ~50 frames (~0.8s at 60 FPS) to reduce overhead
-            if (UpdateCounter >= 50)
+            // Cinematic cameras can exist for only a handful of frames. A long
+            // polling interval leaves the headset on the previous camera while
+            // the desktop shows the actual shot.
+            if (UpdateCounter >= 3)
             {
                 UpdateCounter = 0;
 
@@ -87,7 +90,15 @@ namespace SonsVRMod
                 var sceneAndCam = FindActiveGameplayScene();
 
                 // Only proceed in known gameplay scenes (avoid menus, loading screens, etc.)
-                if ("BlankScene SonsMain SonsTitleScene".Contains(sceneAndCam.scene.name))
+                bool isUnityExplorerFreecam =
+                    sceneAndCam.camera != null &&
+                    sceneAndCam.camera.name.Equals("UE_Freecam");
+                bool isSonsWorldCamera =
+                    sceneAndCam.camera != null &&
+                    sceneAndCam.camera.GetComponent<ActiveWorldCamera>() != null;
+                if ("BlankScene SonsMain SonsTitleScene".Contains(sceneAndCam.scene.name) ||
+                    isUnityExplorerFreecam ||
+                    isSonsWorldCamera)
                 {
                     var activeCam = sceneAndCam.camera;
                     if (activeCam != null)
@@ -103,6 +114,10 @@ namespace SonsVRMod
                             if (!RigCreated)
                             {
                                 CreateCameraRig(UsedCamera);
+                            }
+                            else if (VRPlayer.Instance != null)
+                            {
+                                VRPlayer.Instance.SetSceneAndCamera(sceneAndCam);
                             }
                         }
                         else
@@ -137,47 +152,111 @@ namespace SonsVRMod
         private ActiveSceneWithCamera FindActiveGameplayScene()
         {
             ActiveSceneWithCamera result = new ActiveSceneWithCamera();
+            ActiveSceneWithCamera mainCameraResult = new ActiveSceneWithCamera();
+            ActiveSceneWithCamera inventoryCameraResult = new ActiveSceneWithCamera();
+            ActiveSceneWithCamera worldCameraResult = new ActiveSceneWithCamera();
+            Camera desktopMainCamera = Camera.main;
+            float bestWorldCameraScore = float.NegativeInfinity;
 
-            int sceneCount = SceneManager.sceneCount;
-            for (int i = 0; i < sceneCount; i++)
+            // UnityExplorer creates FreeCam in DontDestroyOnLoad, which is not
+            // included in SceneManager's normal loaded-scene enumeration.
+            GameObject freecamObject = GameObject.Find("UE_Freecam");
+            Camera freecam = freecamObject != null
+                ? freecamObject.GetComponent<Camera>()
+                : null;
+            if (freecam != null && freecam.isActiveAndEnabled)
             {
-                var scene = SceneManager.GetSceneAt(i);
-                if (!scene.IsValid() || !scene.isLoaded)
+                result.scene = SceneManager.GetActiveScene();
+                result.camera = freecam;
+                return result;
+            }
+
+            // Cinematic cameras are sometimes created under DontDestroyOnLoad
+            // or other transient containers that SceneManager.sceneCount does
+            // not enumerate. Inspect all loaded Camera components instead.
+            Camera[] cameras = Resources.FindObjectsOfTypeAll<Camera>();
+            for (int i = 0; i < cameras.Length; i++)
+            {
+                Camera cam = cameras[i];
+                if (cam == null || !cam.isActiveAndEnabled ||
+                    cam.gameObject == null || !cam.gameObject.activeInHierarchy)
                     continue;
 
-                result.scene = scene;
-                bool hasActiveCamera = false;
-
-                // Search all root objects in the scene for cameras
-                var rootObjects = scene.GetRootGameObjects();
-                foreach (var root in rootObjects)
+                string cameraName = cam.name ?? string.Empty;
+                string lowerName = cameraName.ToLowerInvariant();
+                if (lowerName.Equals("vrlefteye") ||
+                    lowerName.Equals("vrrighteye") ||
+                    lowerName.Contains("minimap") ||
+                    lowerName.Contains("reflection") ||
+                    lowerName.Contains("probe") ||
+                    lowerName.Contains("preview") ||
+                    lowerName.Contains("unityexplorer"))
                 {
-                    var cameras = root.GetComponentsInChildren<Camera>(true);
-                    foreach (var cam in cameras)
-                    {
-                        if (!cam.isActiveAndEnabled)
-                            continue;
-
-                        // Prefer the game's known FPS camera
-                        if (cam.name.Equals("MainCameraFP"))
-                        {
-                            result.camera = cam;
-                            hasActiveCamera = true;
-                            break;
-                        }
-
-                        // Fallback: accept any active camera
-                        result.camera = cam;
-                        hasActiveCamera = true;
-                        break;
-                    }
-                    if (hasActiveCamera)
-                        break;
+                    continue;
                 }
 
-                if (hasActiveCamera)
-                    break; // Return the first valid scene with a camera
+                // Cameras rendering to a texture are generally mirrors,
+                // minimaps, or effects rather than the desktop world view.
+                if (cam.targetTexture != null)
+                    continue;
+
+                Scene cameraScene = cam.gameObject.scene;
+                Scene reportedScene =
+                    cameraScene.IsValid() && cameraScene.name != "DontDestroyOnLoad"
+                        ? cameraScene
+                        : SceneManager.GetActiveScene();
+
+                if (cameraName.Equals("InventoryCamera"))
+                {
+                    inventoryCameraResult.scene = reportedScene;
+                    inventoryCameraResult.camera = cam;
+                    continue;
+                }
+
+                if (cameraName.Equals("MainCameraFP"))
+                {
+                    mainCameraResult.scene = reportedScene;
+                    mainCameraResult.camera = cam;
+                }
+
+                bool fullScreen =
+                    cam.rect.width >= 0.95f && cam.rect.height >= 0.95f;
+                bool activeWorldCamera =
+                    cam.GetComponent<ActiveWorldCamera>() != null;
+                if (!fullScreen && !activeWorldCamera && cam != desktopMainCamera)
+                    continue;
+
+                // Camera.depth determines render order. ActiveWorldCamera is
+                // Sons' own marker for the current world view. Camera.main is
+                // only a tie-breaker because cinematics may render through an
+                // untagged camera while MainCameraFP remains tagged.
+                float score = cam.depth * 1000f;
+                if (activeWorldCamera)
+                    score += 100f;
+                if (fullScreen)
+                    score += 10f;
+                if (cam == desktopMainCamera)
+                    score += 1f;
+                if (cameraName.Equals("MainCameraFP"))
+                    score -= 5f;
+
+                if (score > bestWorldCameraScore)
+                {
+                    bestWorldCameraScore = score;
+                    worldCameraResult.scene = reportedScene;
+                    worldCameraResult.camera = cam;
+                }
             }
+
+            // A transient cinematic can overlap MainCameraFP while it renders a
+            // short shot (for example, the attacker after the helicopter crash).
+            // Prefer that active cinematic until it is disabled.
+            if (inventoryCameraResult.camera != null)
+                return inventoryCameraResult;
+            if (worldCameraResult.camera != null)
+                return worldCameraResult;
+            if (mainCameraResult.camera != null)
+                return mainCameraResult;
 
             return result;
         }

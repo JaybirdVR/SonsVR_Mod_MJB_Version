@@ -230,27 +230,12 @@ namespace SonsVRMod
             // Extract position (note: OpenVR uses Z-forward, Unity uses Z-backward)
             Vector3 position = new Vector3(m.m3, m.m7, -m.m11);
 
-            // Extract forward and up vectors for rotation
-            Vector3 forward = new Vector3(m.m2, m.m6, -m.m10);
-            Vector3 up = new Vector3(m.m1, m.m5, -m.m9);
-
-            // Safely compute rotation using LookRotation; fallback to identity on failure
-            Quaternion rotation = Quaternion.identity;
-            if (forward.sqrMagnitude > 0.001f)
-            {
-                try
-                {
-                    rotation = Quaternion.LookRotation(forward, up);
-                }
-                catch
-                {
-                    // Keep identity rotation if LookRotation fails (e.g., degenerate vectors)
-                }
-            }
-
             Pose _rPose = new Pose();
             _rPose.position = position;
-            _rPose.rotation = rotation;
+            // Use the same SteamVR matrix conversion as the HMD. Building a
+            // quaternion from hand-picked forward/up columns produced a
+            // controller ray that pointed sharply downward.
+            _rPose.rotation = m.GetRotation();
             return _rPose;
         }
 

@@ -54,6 +54,14 @@ namespace SonsVRMod
         public static float TurnDeadzone { get; private set; } = DefaultTurnDeadzone;
         public static float SnapTurnThreshold { get; private set; } = DefaultSnapTurnThreshold;
 
+        public static void SetTurnMode(TurnMode mode)
+        {
+            CurrentTurnMode = mode;
+            if (turnModePreference != null)
+                turnModePreference.Value = mode.ToString();
+            MelonLogger.Msg($"[SonsVR] Turn mode set to {mode}.");
+        }
+
         /// <summary>
         /// Singleton instance of this mod for global access.
         /// </summary>
