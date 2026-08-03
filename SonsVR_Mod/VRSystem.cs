@@ -89,6 +89,11 @@ namespace SonsVRMod
                 // Locate the most relevant active scene and its main camera
                 var sceneAndCam = FindActiveGameplayScene();
 
+                string sceneName = sceneAndCam.scene.IsValid()
+                    ? sceneAndCam.scene.name
+                    : string.Empty;
+                bool hasValidScene = !string.IsNullOrEmpty(sceneName);
+
                 // Only proceed in known gameplay scenes (avoid menus, loading screens, etc.)
                 bool isUnityExplorerFreecam =
                     sceneAndCam.camera != null &&
@@ -96,18 +101,25 @@ namespace SonsVRMod
                 bool isSonsWorldCamera =
                     sceneAndCam.camera != null &&
                     sceneAndCam.camera.GetComponent<ActiveWorldCamera>() != null;
-                if ("BlankScene SonsMain SonsTitleScene".Contains(sceneAndCam.scene.name) ||
+                bool isKnownScene =
+                    sceneName == "BlankScene" ||
+                    sceneName == "SonsMain" ||
+                    sceneName == "SonsTitleScene";
+                if (hasValidScene &&
+                    (isKnownScene ||
                     isUnityExplorerFreecam ||
-                    isSonsWorldCamera)
+                    isSonsWorldCamera))
                 {
                     var activeCam = sceneAndCam.camera;
                     if (activeCam != null)
                     {
+                        SetLoadingBlackout(false);
+
                         // Detect scene or camera change
-                        if (sceneAndCam.scene.name != UsedSceneName || UsedCamera == null || activeCam != UsedCamera)
+                        if (sceneName != UsedSceneName || UsedCamera == null || activeCam != UsedCamera)
                         {
                             MelonLogger.Warning($"[VRSystem] Scene or camera changed — respawning VR player rig");
-                            UsedSceneName = sceneAndCam.scene.name;
+                            UsedSceneName = sceneName;
                             UsedCamera = activeCam;
 
                             // Create the VR rig if not already present
@@ -131,16 +143,26 @@ namespace SonsVRMod
                     }
                     else
                     {
-                        MelonLogger.Msg($"[VRSystem] No active camera found in scene: {sceneAndCam.scene.name}");
+                        SetLoadingBlackout(true);
+                        MelonLogger.Msg($"[VRSystem] No active camera found in scene: {sceneName}");
                     }
                 }
                 else
                 {
-                    // Not a gameplay scene — clear references
+                    // A scene transition can temporarily return a camera with
+                    // no valid scene. Keep submitting black until a supported
+                    // camera-owning scene is available again.
+                    SetLoadingBlackout(true);
                     UsedCamera = null;
-                    // Optional: hide VR rig here if needed
+                    UsedSceneName = string.Empty;
                 }
             }
+        }
+
+        private void SetLoadingBlackout(bool active)
+        {
+            if (VRPlayer.Instance?.StereoRender != null)
+                VRPlayer.Instance.StereoRender.SetLoadingBlackout(active);
         }
 
         /// <summary>

@@ -80,6 +80,16 @@ namespace SonsVRMod
         /// </summary>
         public static int defaultCullingMask = -1; // -1 = everything
 
+        private bool _loadingBlackoutActive;
+        private int _leftMaskBeforeBlackout;
+        private CameraClearFlags _leftClearFlagsBeforeBlackout;
+        private Color _leftBackgroundBeforeBlackout;
+        private bool _leftOcclusionBeforeBlackout;
+        private int _rightMaskBeforeBlackout;
+        private CameraClearFlags _rightClearFlagsBeforeBlackout;
+        private Color _rightBackgroundBeforeBlackout;
+        private bool _rightOcclusionBeforeBlackout;
+
         /// <summary>
         /// Current render resolution (width/height) based on SteamVR’s recommended eye texture size.
         /// </summary>
@@ -184,6 +194,72 @@ namespace SonsVRMod
         {
             LeftCam.cullingMask = mask;
             RightCam.cullingMask = mask;
+        }
+
+        /// <summary>
+        /// Submits an explicit black frame while the game is between valid
+        /// camera-owning scenes. This prevents the eye cameras from exposing
+        /// unfinished world geometry while the desktop loading overlay is up.
+        /// </summary>
+        public void SetLoadingBlackout(bool active)
+        {
+            if (_loadingBlackoutActive == active || LeftCam == null || RightCam == null)
+                return;
+
+            if (active)
+            {
+                _leftMaskBeforeBlackout = LeftCam.cullingMask;
+                _leftClearFlagsBeforeBlackout = LeftCam.clearFlags;
+                _leftBackgroundBeforeBlackout = LeftCam.backgroundColor;
+                _leftOcclusionBeforeBlackout = LeftCam.useOcclusionCulling;
+                _rightMaskBeforeBlackout = RightCam.cullingMask;
+                _rightClearFlagsBeforeBlackout = RightCam.clearFlags;
+                _rightBackgroundBeforeBlackout = RightCam.backgroundColor;
+                _rightOcclusionBeforeBlackout = RightCam.useOcclusionCulling;
+
+                ApplyBlackout(LeftCam);
+                ApplyBlackout(RightCam);
+                MelonLogger.Msg("[StereoRender] VR loading blackout enabled.");
+            }
+            else
+            {
+                RestoreAfterBlackout(
+                    LeftCam,
+                    _leftMaskBeforeBlackout,
+                    _leftClearFlagsBeforeBlackout,
+                    _leftBackgroundBeforeBlackout,
+                    _leftOcclusionBeforeBlackout);
+                RestoreAfterBlackout(
+                    RightCam,
+                    _rightMaskBeforeBlackout,
+                    _rightClearFlagsBeforeBlackout,
+                    _rightBackgroundBeforeBlackout,
+                    _rightOcclusionBeforeBlackout);
+                MelonLogger.Msg("[StereoRender] VR loading blackout disabled.");
+            }
+
+            _loadingBlackoutActive = active;
+        }
+
+        private static void ApplyBlackout(Camera camera)
+        {
+            camera.cullingMask = 0;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = Color.black;
+            camera.useOcclusionCulling = false;
+        }
+
+        private static void RestoreAfterBlackout(
+            Camera camera,
+            int cullingMask,
+            CameraClearFlags clearFlags,
+            Color backgroundColor,
+            bool useOcclusionCulling)
+        {
+            camera.cullingMask = cullingMask;
+            camera.clearFlags = clearFlags;
+            camera.backgroundColor = backgroundColor;
+            camera.useOcclusionCulling = useOcclusionCulling;
         }
 
         /// <summary>

@@ -24,6 +24,9 @@ using Image = UnityEngine.UI.Image;
 using Mathf = UnityEngine.Mathf;
 using NativeLocalPlayer = Il2CppTheForest.Utils.LocalPlayer;
 using NativeVRPlayerControl = Il2CppTheForest.VR.VRPlayerControl;
+using NativeCutsceneManager = Il2CppSons.Cutscenes.CutsceneManager;
+using NativeIntroLaptopController = Il2CppSons.Cutscenes.IntroLaptopController;
+using NativeCutsceneTrigger = Il2Cpp.CutsceneTrigger;
 
 namespace SonsVRMod
 {
@@ -227,6 +230,21 @@ namespace SonsVRMod
         private bool _rightInventoryEyeUseOcclusionCulling;
         private Quaternion _lastSourceCameraRotation;
         private bool _sourceCameraRotationInitialized = false;
+        private bool _cutscenePlaying;
+        private bool _interactiveGameplayCamera;
+        private bool _cameraOwnershipStateInitialized;
+        private NativeIntroLaptopController _introLaptopController;
+        private GameObject _introLaptopCloseTrigger;
+        private int _introLaptopCurrentScreen = -1;
+        private int _introLaptopScreenCount;
+        private bool _introLaptopCloseTriggerActive;
+        private string _introLaptopCloseTriggerPath = string.Empty;
+        private float _nextIntroLaptopDiagnosticScanTime;
+        private NativeCutsceneTrigger _introLaptopNativeCloseTrigger;
+        private bool _introLaptopObserverBound;
+        private bool _introLaptopSightTargeted;
+        private bool _introLaptopGripWasPressed;
+        private bool _introLaptopGripStartedOnTarget;
 
         
         private bool _popupDisableTimerStarted = false;
@@ -406,7 +424,9 @@ namespace SonsVRMod
                     }
                 }
 
-                if (UsedCamera.name.Equals("MainCameraFP") &&
+                UpdateCameraOwnershipState();
+
+                if (IsInteractiveGameplayCamera() &&
                     Body != null && StereoRender?.Head != null)
                 {
                     Vector3 gameplayForward = LocalPlayer != null
@@ -454,6 +474,9 @@ namespace SonsVRMod
             {
                 return;
             }
+
+            UpdateCameraOwnershipState();
+            UpdateIntroLaptopInteraction();
 
             bool isTitleScene = IsTitleScene();
             // The title screen is mirrored from the desktop framebuffer, but
@@ -538,11 +561,13 @@ namespace SonsVRMod
                 // --- POSITIONING: Sync VR origin to game camera ---
                 if (UsedCamera != null && Origin != null)
                 {
-                    bool isGameplayCamera = UsedCamera.name.Equals("MainCameraFP");
+                    bool isGameplayCamera = IsInteractiveGameplayCamera();
                     if (!isGameplayCamera && Body != null && StereoRender?.Head != null)
                     {
                         Quaternion currentSourceRotation =
-                            GetComfortCameraRotation(UsedCamera.transform.forward);
+                            IsAuthoredCinematicCamera()
+                                ? UsedCamera.transform.rotation
+                                : GetComfortCameraRotation(UsedCamera.transform.forward);
                         if (!_sourceCameraRotationInitialized)
                         {
                             Body.rotation =
@@ -589,7 +614,14 @@ namespace SonsVRMod
                 float horizontalTurn = rightStick.x;
                 float turnDeadzone = SonsVRMod.TurnDeadzone;
 
-                if (SonsVRMod.CurrentTurnMode == TurnMode.Smooth)
+                if (!IsInteractiveGameplayCamera())
+                {
+                    // Seated and authored cinematics own gross orientation.
+                    // Require the stick to return to center before a later snap.
+                    if (Mathf.Abs(horizontalTurn) <= turnDeadzone)
+                        snapTurnReset = true;
+                }
+                else if (SonsVRMod.CurrentTurnMode == TurnMode.Smooth)
                 {
                     if (Mathf.Abs(horizontalTurn) > turnDeadzone && StereoRender != null)
                     {
@@ -622,10 +654,10 @@ namespace SonsVRMod
                     }
                 }
 
-                // Keep the desktop/game camera aligned with the VR view even
-                // on title and loading screens where LocalPlayer is absent.
+                // During interactive gameplay the desktop camera follows the
+                // VR view. Cinematics retain authored camera ownership.
                 if (UsedCamera != null &&
-                    UsedCamera.name.Equals("MainCameraFP") &&
+                    IsInteractiveGameplayCamera() &&
                     StereoRender?.Head != null)
                 {
                     UsedCamera.transform.rotation = StereoRender.Head.rotation;
@@ -634,7 +666,7 @@ namespace SonsVRMod
                 // --- BODY ALIGNMENT: Rotate player to match HMD forward direction ---
                 if (LocalPlayer != null &&
                     UsedCamera != null &&
-                    UsedCamera.name.Equals("MainCameraFP") &&
+                    IsInteractiveGameplayCamera() &&
                     StereoRender?.Head != null)
                 {
 
@@ -660,7 +692,7 @@ namespace SonsVRMod
                 if (firstPersonCharacter != null &&
                     firstPersonCharacter.enabled &&
                     UsedCamera != null &&
-                    UsedCamera.name.Equals("MainCameraFP"))
+                    IsInteractiveGameplayCamera())
                 {
                     UnityEngine.Vector2 leftStick = NativeVRInput.GetVector2("ThumbstickLeft");
 
@@ -1277,6 +1309,18 @@ namespace SonsVRMod
             return Quaternion.LookRotation(forward.normalized, Vector3.up);
         }
 
+        private bool IsInteractiveGameplayCamera()
+        {
+            return _interactiveGameplayCamera;
+        }
+
+        private bool IsAuthoredCinematicCamera()
+        {
+            return UsedCamera != null &&
+                (_cutscenePlaying ||
+                 UsedCamera.name.Equals("MainCameraCustcene"));
+        }
+
         private Quaternion GetComfortCameraRotation(Vector3 forward)
         {
             if (forward.sqrMagnitude < 0.0001f)
@@ -1287,9 +1331,204 @@ namespace SonsVRMod
             if (Mathf.Abs(Vector3.Dot(forward, up)) > 0.999f)
                 up = Body != null ? Body.up : Vector3.forward;
 
-            // Preserve the cinematic camera's authored aim while stripping roll,
-            // which is uncomfortable in a head-tracked view.
             return Quaternion.LookRotation(forward, up);
+        }
+
+        private void UpdateCameraOwnershipState()
+        {
+            bool cutscenePlaying = NativeCutsceneManager.IsCutscenePlaying();
+            bool interactiveGameplayCamera =
+                UsedCamera != null &&
+                UsedCamera.name.Equals("MainCameraFP") &&
+                firstPersonCharacter != null &&
+                firstPersonCharacter.enabled &&
+                !cutscenePlaying;
+
+            if (!_cameraOwnershipStateInitialized ||
+                cutscenePlaying != _cutscenePlaying ||
+                interactiveGameplayCamera != _interactiveGameplayCamera)
+            {
+                MelonLogger.Msg(
+                    $"[VR Camera Ownership] camera='{UsedCamera?.name ?? "<null>"}', " +
+                    $"cutscenePlaying={cutscenePlaying}, " +
+                    $"firstPersonEnabled={firstPersonCharacter?.enabled ?? false}, " +
+                    $"interactiveGameplay={interactiveGameplayCamera}.");
+                _cameraOwnershipStateInitialized = true;
+            }
+
+            _cutscenePlaying = cutscenePlaying;
+            _interactiveGameplayCamera = interactiveGameplayCamera;
+            UpdateIntroLaptopDiagnostics();
+        }
+
+        private void UpdateIntroLaptopDiagnostics()
+        {
+            if (Time.unscaledTime < _nextIntroLaptopDiagnosticScanTime)
+                return;
+
+            _nextIntroLaptopDiagnosticScanTime = Time.unscaledTime + 0.25f;
+
+            if (_introLaptopController == null && _cutscenePlaying)
+            {
+                NativeIntroLaptopController[] controllers =
+                    Resources.FindObjectsOfTypeAll<NativeIntroLaptopController>();
+                foreach (NativeIntroLaptopController controller in controllers)
+                {
+                    if (controller != null && controller.gameObject.activeInHierarchy)
+                    {
+                        _introLaptopController = controller;
+                        break;
+                    }
+                }
+            }
+
+            if (_introLaptopController == null)
+                return;
+
+            GameObject closeTrigger = _introLaptopController._closeLaptopTrigger;
+            int currentScreen = _introLaptopController._currentScreen;
+            int screenCount = _introLaptopController._laptopScreens != null
+                ? _introLaptopController._laptopScreens.Count
+                : 0;
+            bool closeTriggerActive = closeTrigger != null && closeTrigger.activeInHierarchy;
+            string closeTriggerPath = closeTrigger != null
+                ? GetTransformPath(closeTrigger.transform)
+                : string.Empty;
+
+            bool changed =
+                closeTrigger != _introLaptopCloseTrigger ||
+                currentScreen != _introLaptopCurrentScreen ||
+                screenCount != _introLaptopScreenCount ||
+                closeTriggerActive != _introLaptopCloseTriggerActive ||
+                closeTriggerPath != _introLaptopCloseTriggerPath;
+
+            if (closeTrigger != _introLaptopCloseTrigger)
+            {
+                _introLaptopNativeCloseTrigger = closeTrigger != null
+                    ? closeTrigger.GetComponent<NativeCutsceneTrigger>()
+                    : null;
+                _introLaptopObserverBound = false;
+                _introLaptopSightTargeted = false;
+                _introLaptopGripStartedOnTarget = false;
+            }
+
+            _introLaptopCloseTrigger = closeTrigger;
+            _introLaptopCurrentScreen = currentScreen;
+            _introLaptopScreenCount = screenCount;
+            _introLaptopCloseTriggerActive = closeTriggerActive;
+            _introLaptopCloseTriggerPath = closeTriggerPath;
+
+            if (changed)
+            {
+                MelonLogger.Msg(
+                    $"[Intro Laptop] screen={currentScreen}/{screenCount}, " +
+                    $"closeTrigger='{GetObjectName(closeTrigger)}', " +
+                    $"active={closeTriggerActive}, path='{closeTriggerPath}'.");
+            }
+        }
+
+        /// <summary>
+        /// Keeps the intro laptop's authored close trigger tied to the actual
+        /// HMD sight line. The native trigger remains responsible for its
+        /// prompt and E input. If that native path has not consumed the trigger
+        /// by the time a short grip is released, invoke the trigger's own event
+        /// once as a narrowly scoped fallback.
+        /// </summary>
+        private void UpdateIntroLaptopInteraction()
+        {
+            bool gripPressed = NativeVRInput.GetBoolean("GripRight_Press") ||
+                               NativeVRInput.GetBoolean("GripLeft_Press");
+
+            bool triggerAvailable =
+                _cutscenePlaying &&
+                _introLaptopCloseTrigger != null &&
+                _introLaptopCloseTrigger.activeInHierarchy &&
+                _introLaptopNativeCloseTrigger != null &&
+                StereoRender?.Head != null;
+
+            if (!triggerAvailable)
+            {
+                _introLaptopSightTargeted = false;
+                _introLaptopGripStartedOnTarget = false;
+                _introLaptopGripWasPressed = gripPressed;
+                return;
+            }
+
+            if (!_introLaptopObserverBound)
+            {
+                _introLaptopNativeCloseTrigger.SetObserverTransform(StereoRender.Head);
+                _introLaptopObserverBound = true;
+                MelonLogger.Msg(
+                    "[Intro Laptop] Native close-trigger observer bound to VRHead.");
+            }
+
+            const float maxDistance = 16f;
+            const float forgivenessRadius = 0.12f;
+            Ray sightRay = new Ray(
+                StereoRender.Head.position,
+                StereoRender.Head.forward);
+            Collider targetCollider =
+                _introLaptopCloseTrigger.GetComponent<Collider>();
+            bool sightTargeted = false;
+            if (targetCollider != null)
+            {
+                // Collider.Raycast is available in the game's IL2CPP surface;
+                // Physics.SphereCastAll is not and aborts LateUpdate every
+                // frame once this trigger becomes active. Approximate the
+                // small forgiveness radius around this one authored collider
+                // without invoking an unstripped Physics overload.
+                RaycastHit directHit;
+                sightTargeted = targetCollider.Raycast(
+                    sightRay,
+                    out directHit,
+                    maxDistance);
+
+                if (!sightTargeted)
+                {
+                    Bounds bounds = targetCollider.bounds;
+                    Vector3 toTarget = bounds.center - sightRay.origin;
+                    float distanceAlongRay =
+                        Vector3.Dot(toTarget, sightRay.direction);
+                    if (distanceAlongRay >= 0f &&
+                        distanceAlongRay <= maxDistance)
+                    {
+                        Vector3 closestPoint =
+                            sightRay.origin +
+                            sightRay.direction * distanceAlongRay;
+                        float allowedRadius =
+                            bounds.extents.magnitude + forgivenessRadius;
+                        sightTargeted =
+                            (bounds.center - closestPoint).sqrMagnitude <=
+                            allowedRadius * allowedRadius;
+                    }
+                }
+            }
+
+            if (sightTargeted != _introLaptopSightTargeted)
+            {
+                _introLaptopSightTargeted = sightTargeted;
+                MelonLogger.Msg(
+                    $"[Intro Laptop] VR sight target={sightTargeted}.");
+            }
+
+            if (gripPressed && !_introLaptopGripWasPressed)
+                _introLaptopGripStartedOnTarget = sightTargeted;
+
+            if (!gripPressed &&
+                _introLaptopGripWasPressed &&
+                _introLaptopGripStartedOnTarget)
+            {
+                _introLaptopGripStartedOnTarget = false;
+                if (_introLaptopCloseTrigger.activeInHierarchy)
+                {
+                    MelonLogger.Msg(
+                        "[Intro Laptop] Native E path left the close trigger " +
+                        "active; invoking its authored event fallback.");
+                    _introLaptopNativeCloseTrigger.EventTriggered();
+                }
+            }
+
+            _introLaptopGripWasPressed = gripPressed;
         }
 
         private void CreateMenuImage(string name, Transform parent, Color color, Vector2 size, Vector2 position)
